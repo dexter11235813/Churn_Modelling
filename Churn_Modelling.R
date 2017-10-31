@@ -96,11 +96,16 @@ auc(roc(as.numeric(pred),as.numeric(test[,19])))
   t = Sys.time()
   fitControl <- trainControl(method = "repeatedcv",
                              number = 10,
-                             repeats = 3,allowParallel = T)
+                             repeats = 3,search = "grid",allowParallel = T)
+  tunegrid = expand.grid(.mtry = c(1:18))
   train$Exited = as.factor(train$Exited)
-  rf.fit = train(Exited ~., data = train, trControl = fitControl,method = "rf")
+  rf.fit = train(Exited ~., data = train, trControl = fitControl,tuneGrid = tunegrid,method = "rf")
+  #j = tuneRF(train[,-19],train[,19],stepFactor = 2, improve=1e-5, ntree=500)
+  
   p = predict(rf.fit, (test[,-19]))
   auc(roc(as.integer(p), as.integer(test[,17])))
+  
+  
   gbm.fit = train(Exited ~ ., data = train, trControl = fitControl,method = "gbm")
   pred.fit = predict(gbm.fit,test[,-19])
   
@@ -135,19 +140,26 @@ level.1$pred.XGB = pred.xgb
 
 
 # Adaboost :
+# 
+# train1 = train
+# test1 = test
+# levels(train1$Exited) = c("No","Yes")
+# levels(test1$Exited) = c("No","Yes")
+# test1$Exited = as.factor(test1$Exited)
+# train1$Exited = as.factor(train1$Exited)
+# fit.ADA = train(Exited ~., train1, trControl = fitControl, method = "adaboost")
+# pred.ADA = predict(fit.ADA, test1[,-19])
+# level.1$pred.ADA = as.factor(pred.ADA)
 
-train1 = train
-test1 = test
-levels(train1$Exited) = c("No","Yes")
-levels(test1$Exited) = c("No","Yes")
-test1$Exited = as.factor(test1$Exited)
-train1$Exited = as.factor(train1$Exited)
-fit.ADA = train(Exited ~., train1, trControl = fitControl, method = "adaboost")
-pred.ADA = predict(fit.ADA, test1[,-19])
-level.1$pred.ADA = as.factor(pred.ADA)
+# SVM
+library(e1071)
+train$Exited = as.factor(train$Exited)
+fit.svm = svm(Exited ~., data = train,gamma = 1, cost = 4)
+pred.svm = predict(fit.svm,test[,-19])
+#j = tune(svm,Exited ~.,data = train,ranges = list(gamma = 2^(-2:2),cost = 2^(2:4)),tunecontrol = tune.control(cross = 10))
+auc(roc(as.numeric(pred.svm),as.numeric(as.factor(test[,19]))))
 
-
-
+level.1$pred.SVM = pred.svm
 level.1$pred.RF = as.factor(level.1$pred.RF)
 level.1$pred.GBM = as.factor(level.1$pred.GBM)
 level.1$pred.XGB = as.factor(level.1$pred.XGB)
@@ -167,4 +179,4 @@ pred.val = predict(level.1.fit,level.1.valid[,-ncol(level.1.valid)])
 auc = roc(as.numeric(pred.val), as.numeric(level.1.valid[,ncol(level.1.valid)]))
 auc(auc)
 
-# AUC ~.88
+
