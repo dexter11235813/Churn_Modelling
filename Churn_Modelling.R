@@ -2,12 +2,15 @@ library(pROC)
 library(caret)
 library(dplyr)
 library(keras)
+library(randomForest)
+library(e1071)
 library(DMwR)
 library(parallel)
+library(xgboost)
 library(doParallel)
 
-
-data = read.csv("~/Desktop/Churn_Modelling.csv")
+t = Sys.time()
+data = read.csv("~/Desktop/Churn_Modelling/Churn_Modelling.csv")
 head(data)
 data$RowNumber = NULL
 data$CustomerId = NULL
@@ -69,9 +72,10 @@ model %>% layer_dense(units = 128, input_shape = 18, activation = "relu") %>%
   layer_dropout(.3) %>% 
   layer_dense(2, activation = "softmax")
 
-model %>% compile(loss = "categorical_crossentropy", metric = "accuracy", optimizer = "adam")
+opt = optimizer_adam(lr = .0023)
+model %>% compile(loss = "categorical_crossentropy", metric = "accuracy", optimizer = opt)
 
-model %>% fit(train_x,train_y, batch = 128,validation_split = .2, epoch = 500)
+model %>% fit(train_x,train_y, batch = 128,validation_split = .2, epoch = 250)
 
 model %>% evaluate(test_x,test_y, batch = 128)
 
@@ -93,32 +97,30 @@ auc(roc(as.numeric(pred),as.numeric(test[,19])))
   level.1 = data.frame(pred.GBM = integer(nrow(test)), pred.XGB = integer(nrow(test)))
   cluster <- makeCluster(detectCores() - 1)
   registerDoParallel(cluster)
-  t = Sys.time()
   fitControl <- trainControl(method = "repeatedcv",
-                             number = 10,
-                             repeats = 3,search = "grid",allowParallel = T)
-  tunegrid = expand.grid(.mtry = c(1:18))
+                             number = 5,
+                             repeats = 2,allowParallel = T)
+  #tunegrid = expand.grid(.mtry = c(1:18))
   train$Exited = as.factor(train$Exited)
-  rf.fit = train(Exited ~., data = train, trControl = fitControl,tuneGrid = tunegrid,method = "rf")
+  rf.fit = train(Exited ~., data = train, trControl = fitControl,method = "rf")
   #j = tuneRF(train[,-19],train[,19],stepFactor = 2, improve=1e-5, ntree=500)
   
-  p = predict(rf.fit, (test[,-19]))
-  auc(roc(as.integer(p), as.integer(test[,17])))
+  rf.pred = predict(rf.fit, (test[,-19]))
+  auc(roc(as.integer(rf.pred), as.integer(test[,19])))
   
   
   gbm.fit = train(Exited ~ ., data = train, trControl = fitControl,method = "gbm")
+  
   pred.fit = predict(gbm.fit,test[,-19])
   
   stopCluster(cluster)
   registerDoSEQ()
-  Sys.time() -t 
-  
+
 level.1$pred.GBM = as.integer(pred.fit) - 1
-level.1$pred.RF = as.integer(p)
+level.1$pred.RF = as.integer(rf.pred) 
 
 
 # Extreme Gradient Boosting
-library(xgboost)
   
 train$Exited = as.integer(train$Exited) - 1
 test$Exited = as.integer(test$Exited) - 1
@@ -138,21 +140,19 @@ auc(roc(pred.xgb, test[,19]-1))
 
 level.1$pred.XGB = pred.xgb
 
-
+t = Sys.time()
 # Adaboost :
-# 
-# train1 = train
-# test1 = test
-# levels(train1$Exited) = c("No","Yes")
-# levels(test1$Exited) = c("No","Yes")
-# test1$Exited = as.factor(test1$Exited)
-# train1$Exited = as.factor(train1$Exited)
-# fit.ADA = train(Exited ~., train1, trControl = fitControl, method = "adaboost")
-# pred.ADA = predict(fit.ADA, test1[,-19])
-# level.1$pred.ADA = as.factor(pred.ADA)
-
+train1 = train
+test1 = test
+levels(train1$Exited) = c("No","Yes")
+levels(test1$Exited) = c("No","Yes")
+test1$Exited = as.factor(test1$Exited)
+train1$Exited = as.factor(train1$Exited)
+fit.ADA = train(Exited ~., train1, trControl = fitControl, method = "adaboost")
+pred.ADA = predict(fit.ADA, test1[,-19])
+levels(level.1$pred.ADA) = c(0,1)
+level.1$pred.ADA = as.factor(pred.ADA)
 # SVM
-library(e1071)
 train$Exited = as.factor(train$Exited)
 fit.svm = svm(Exited ~., data = train,gamma = 1, cost = 4)
 pred.svm = predict(fit.svm,test[,-19])
@@ -160,12 +160,18 @@ pred.svm = predict(fit.svm,test[,-19])
 auc(roc(as.numeric(pred.svm),as.numeric(as.factor(test[,19]))))
 
 level.1$pred.SVM = pred.svm
-level.1$pred.RF = as.factor(level.1$pred.RF)
+level.1$pred.RF = as.factor(level.1$pred.RF - 1)
 level.1$pred.GBM = as.factor(level.1$pred.GBM)
 level.1$pred.XGB = as.factor(level.1$pred.XGB)
 level.1$predNN = as.factor(pred - 1)
-level.1$label =  as.factor(test$Exited)
+level.1$label =  as.factor(test$Exited + 1)
 
+# GLM
+pred.GLM = train(Exited ~.,data = train,trControl = fitControl, method = "glm")
+fit.GLM = predict(pred.GLM,test[,-19])
+
+level.1$pred.GLM = as.factor(fit.GLM)
+auc(roc(as.numeric(fit.GLM),as.numeric(test[,19])))
 
 # Now that I have predictions from all the models, I will split the level.1 dataset into train and test dataset to
 # train a model to predict the label column from the predictions of all other models.
@@ -178,5 +184,6 @@ pred.val = predict(level.1.fit,level.1.valid[,-ncol(level.1.valid)])
 
 auc = roc(as.numeric(pred.val), as.numeric(level.1.valid[,ncol(level.1.valid)]))
 auc(auc)
+
 
 
